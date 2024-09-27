@@ -1,14 +1,16 @@
 package org.elasticsearch.plugin.nlpcn.executors;
 
 import com.google.common.base.Joiner;
-import org.elasticsearch.client.Client;
+import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.plugin.nlpcn.QueryActionElasticExecutor;
-import org.elasticsearch.rest.BytesRestResponse;
 import org.elasticsearch.rest.RestChannel;
+import org.elasticsearch.rest.RestResponse;
 import org.elasticsearch.rest.RestStatus;
+import org.nlpcn.es4sql.Util;
 import org.nlpcn.es4sql.query.QueryAction;
 
-import java.util.*;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Created by Eliran on 26/12/2015.
@@ -27,13 +29,16 @@ public class CSVResultRestExecutor implements RestExecutor {
         boolean includeScore = getBooleanOrDefault(params,"_score",false);
         boolean includeType = getBooleanOrDefault(params,"_type",false);
         boolean includeId = getBooleanOrDefault(params,"_id",false);
-        CSVResult result  = new CSVResultsExtractor(includeScore,includeType,includeId).extractResults(queryResult,flat,separator);
+        boolean includeScrollId = getBooleanOrDefault(params,"_scroll_id",false);
+        boolean quote = getBooleanOrDefault(params, "quote", false);
+        CSVResult result  = new CSVResultsExtractor(includeScore,includeType,includeId,includeScrollId,queryAction).extractResults(queryResult,flat,separator,quote);
         String newLine = "\n";
         if(params.containsKey("newLine")){
          newLine = params.get("newLine");
         }
-        String csvString = buildString(separator, result, newLine);
-        BytesRestResponse bytesRestResponse = new BytesRestResponse(RestStatus.OK, csvString);
+        boolean showHeader = getBooleanOrDefault(params, "showHeader", true);
+        String csvString = buildString(separator, result, newLine, showHeader, quote);
+        RestResponse bytesRestResponse = new RestResponse(RestStatus.OK, csvString);
         channel.sendResponse(bytesRestResponse);
     }
 
@@ -49,12 +54,15 @@ public class CSVResultRestExecutor implements RestExecutor {
         boolean includeScore = getBooleanOrDefault(params,"_score",false);
         boolean includeType = getBooleanOrDefault(params,"_type",false);
         boolean includeId = getBooleanOrDefault(params,"_id",false);
-        CSVResult result  = new CSVResultsExtractor(includeScore,includeType,includeId).extractResults(queryResult,flat,separator);
+        boolean includeScrollId = getBooleanOrDefault(params,"_scroll_id",false);
+        boolean quote = getBooleanOrDefault(params, "quote", false);
+        CSVResult result  = new CSVResultsExtractor(includeScore,includeType,includeId,includeScrollId,queryAction).extractResults(queryResult,flat,separator,quote);
         String newLine = "\n";
         if(params.containsKey("newLine")){
             newLine = params.get("newLine");
         }
-        String csvString = buildString(separator, result, newLine);
+        boolean showHeader = getBooleanOrDefault(params, "showHeader", true);
+        String csvString = buildString(separator, result, newLine, showHeader, quote);
         return csvString;
     }
 
@@ -66,10 +74,12 @@ public class CSVResultRestExecutor implements RestExecutor {
         return flat;
     }
 
-    private String buildString(String separator, CSVResult result, String newLine) {
+    private String buildString(String separator, CSVResult result, String newLine, boolean showHeader, boolean quote) {
         StringBuilder csv = new StringBuilder();
-        csv.append(Joiner.on(separator).join(result.getHeaders()));
-        csv.append(newLine);
+        if (showHeader) {
+            csv.append(Joiner.on(separator).join(quote ? result.getHeaders().stream().map(Util::quoteString).collect(Collectors.toList()) : result.getHeaders()));
+            csv.append(newLine);
+        }
         csv.append(Joiner.on(newLine).join(result.getLines()));
         return csv.toString();
     }

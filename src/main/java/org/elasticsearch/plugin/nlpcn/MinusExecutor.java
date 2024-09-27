@@ -1,10 +1,10 @@
 package org.elasticsearch.plugin.nlpcn;
 
+import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.client.Client;
+import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.document.DocumentField;
-import org.elasticsearch.common.text.Text;
-import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.nlpcn.es4sql.Util;
@@ -19,7 +19,14 @@ import org.nlpcn.es4sql.query.DefaultQueryAction;
 import org.nlpcn.es4sql.query.multi.MultiQueryRequestBuilder;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * Created by Eliran on 26/8/2016.
@@ -108,7 +115,8 @@ public class MinusExecutor implements ElasticHitsExecutor {
             ArrayList<Object> values = new ArrayList<Object>();
             values.add(result);
             fields.put(fieldName,new DocumentField(fieldName, values));
-            SearchHit searchHit = new SearchHit(currentId,currentId+"", new Text(someHit.getType()), fields);
+            SearchHit searchHit = SearchHit.unpooled(currentId, currentId + "");
+            searchHit.addDocumentFields(fields, Collections.emptyMap());
             searchHit.sourceRef(someHit.getSourceRef());
             searchHit.getSourceAsMap().clear();
             Map<String, Object> sourceAsMap = new HashMap<>();
@@ -119,7 +127,7 @@ public class MinusExecutor implements ElasticHitsExecutor {
         }
         int totalSize = currentId - 1;
         SearchHit[] unionHitsArr = minusHitsList.toArray(new SearchHit[totalSize]);
-        this.minusHits = new SearchHits(unionHitsArr, totalSize,1.0f);
+        this.minusHits = SearchHits.unpooled(unionHitsArr, new TotalHits(totalSize, TotalHits.Relation.EQUAL_TO), 1.0f);
     }
 
     private void fillMinusHitsFromResults(Set<ComperableHitResult> comperableHitResults) {
@@ -129,7 +137,8 @@ public class MinusExecutor implements ElasticHitsExecutor {
             ArrayList<Object> values = new ArrayList<Object>();
             values.add(result);
             SearchHit originalHit = result.getOriginalHit();
-            SearchHit searchHit = new SearchHit(currentId,originalHit.getId(), new Text(originalHit.getType()), originalHit.getFields());
+            SearchHit searchHit = SearchHit.unpooled(currentId, originalHit.getId());
+            searchHit.addDocumentFields(originalHit.getDocumentFields(), Collections.emptyMap());
             searchHit.sourceRef(originalHit.getSourceRef());
             searchHit.getSourceAsMap().clear();
             Map<String, Object> sourceAsMap = result.getFlattenMap();
@@ -147,7 +156,7 @@ public class MinusExecutor implements ElasticHitsExecutor {
         }
         int totalSize = currentId - 1;
         SearchHit[] unionHitsArr = minusHitsList.toArray(new SearchHit[totalSize]);
-        this.minusHits = new SearchHits(unionHitsArr, totalSize,1.0f);
+        this.minusHits = SearchHits.unpooled(unionHitsArr, new TotalHits(totalSize, TotalHits.Relation.EQUAL_TO), 1.0f);
     }
 
     private Set<ComperableHitResult> runWithScrollings() {

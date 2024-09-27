@@ -3,33 +3,27 @@ package org.nlpcn.es4sql;
 
 import com.alibaba.druid.sql.ast.SQLExpr;
 import com.alibaba.druid.sql.ast.expr.SQLQueryExpr;
-import org.elasticsearch.client.Client;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.plugin.nlpcn.QueryActionElasticExecutor;
 import org.elasticsearch.plugin.nlpcn.executors.CSVResult;
 import org.elasticsearch.plugin.nlpcn.executors.CSVResultsExtractor;
-import org.elasticsearch.plugin.nlpcn.executors.CsvExtractorException;
-
-import org.elasticsearch.transport.client.PreBuiltTransportClient;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Test;
 import org.nlpcn.es4sql.domain.Condition;
 import org.nlpcn.es4sql.domain.Select;
 import org.nlpcn.es4sql.domain.Where;
-import org.nlpcn.es4sql.exception.SqlParseException;
 import org.nlpcn.es4sql.parse.ElasticSqlExprParser;
 import org.nlpcn.es4sql.parse.ScriptFilter;
 import org.nlpcn.es4sql.parse.SqlParser;
 import org.nlpcn.es4sql.query.QueryAction;
-import org.junit.Test;
 
 import java.net.UnknownHostException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static org.nlpcn.es4sql.TestsConstants.*;
+import static org.nlpcn.es4sql.TestsConstants.TEST_INDEX_ACCOUNT;
+import static org.nlpcn.es4sql.TestsConstants.TEST_INDEX_PEOPLE;
 
 /**
  * Created by allwefantasy on 8/25/16.
@@ -47,7 +41,7 @@ public class SQLFunctionsTest {
     public void functionFieldAliasAndGroupByAlias() throws Exception {
         String query = "SELECT " +
                 "floor(substring(address,0,3)*20) as key," +
-                "sum(age) cvalue FROM " + TEST_INDEX_ACCOUNT + "/account where address is not null " +
+                "sum(age) cvalue FROM " + TEST_INDEX_ACCOUNT + " where address is not null " +
                 "group by key order by cvalue desc limit 10  ";
         SearchDao searchDao = MainTestSuite.getSearchDao() != null ? MainTestSuite.getSearchDao() : getSearchDao();
         System.out.println(searchDao.explain(query).explain().explain());
@@ -65,14 +59,14 @@ public class SQLFunctionsTest {
         //here is a bug,if only script fields are included,then all fields will return; fix later
         String query = "SELECT " +
                 "substring(address,0,3) as key,address from " +
-                TEST_INDEX_ACCOUNT + "/account where address is not null " +
+                TEST_INDEX_ACCOUNT + " where address is not null " +
                 "order by address desc limit 10  ";
 
         CSVResult csvResult = getCsvResult(false, query);
         List<String> headers = csvResult.getHeaders();
         List<String> content = csvResult.getLines();
         Assert.assertTrue(headers.contains("key"));
-        Assert.assertTrue(content.contains("863 Wythe Place,863"));
+        Assert.assertTrue(content.contains("863,863 Wythe Place"));
     }
 
     @Test
@@ -81,7 +75,7 @@ public class SQLFunctionsTest {
         //here is a bug,csv field with spa
         String query = "SELECT " +
                 "address as key,age from " +
-                TEST_INDEX_ACCOUNT + "/account where address is not null " +
+                TEST_INDEX_ACCOUNT + " where address is not null " +
                 "limit 10  ";
 
         CSVResult csvResult = getCsvResult(false, query);
@@ -96,7 +90,7 @@ public class SQLFunctionsTest {
         //here is a bug,csv field with spa
         String query = "SELECT " +
                 "age as key,sum(age) from " +
-                TEST_INDEX_ACCOUNT + "/account where address is not null " +
+                TEST_INDEX_ACCOUNT + " where address is not null " +
                 " group by key limit 10  ";
 
         CSVResult csvResult = getCsvResult(false, query);
@@ -113,7 +107,7 @@ public class SQLFunctionsTest {
         //here is a bug,csv field with spa
         String query = "SELECT " +
                 " concat_ws('-',age,'-'),address from " +
-                TEST_INDEX_ACCOUNT + "/account " +
+                TEST_INDEX_ACCOUNT +
                 " limit 10  ";
 
         CSVResult csvResult = getCsvResult(false, query);
@@ -142,7 +136,7 @@ public class SQLFunctionsTest {
 //
 //        String query = "SELECT " +
 //                " * from " +
-//                TestsConstants.TEST_INDEX + "/account " +
+//                TestsConstants.TEST_INDEX +
 //                " where split(address,' ')[0]='806' limit 1000  ";
 //
 //        CSVResult csvResult = getCsvResult(false, query);
@@ -155,7 +149,7 @@ public class SQLFunctionsTest {
 //
 //        String query = "SELECT " +
 //                " * from " +
-//                TestsConstants.TEST_INDEX + "/account " +
+//                TestsConstants.TEST_INDEX +
 //                " where floor(split(address,' ')[0]+0) > 805 limit 1000  ";
 //
 //        SearchDao searchDao = MainTestSuite.getSearchDao() != null ? MainTestSuite.getSearchDao() : getSearchDao();
@@ -171,7 +165,7 @@ public class SQLFunctionsTest {
 
         String query = "SELECT " +
                 " * from " +
-                TEST_INDEX_ACCOUNT + "/account " +
+                TEST_INDEX_ACCOUNT +
                 " where floor(split(address,' ')[0]+0) > b limit 1000  ";
 
         Select select = parser.parseSelect((SQLQueryExpr) queryToExpr(query));
@@ -181,7 +175,7 @@ public class SQLFunctionsTest {
         ScriptFilter scriptFilter = (ScriptFilter) (((Condition) (where.getWheres().get(0))).getValue());
 
         Assert.assertTrue(scriptFilter.getScript().contains("doc['address'].value.split(' ')[0]"));
-        Pattern pattern = Pattern.compile("floor_\\d+ > doc\\['b'\\].value");
+        Pattern pattern = Pattern.compile("\\(\\(Comparable\\)floor_\\d+\\).compareTo\\(doc\\['b'\\].value\\) > 0");
         Matcher matcher = pattern.matcher(scriptFilter.getScript());
         Assert.assertTrue(matcher.find());
 
@@ -196,7 +190,7 @@ public class SQLFunctionsTest {
 
         String query = "SELECT " +
                 " * from " +
-                TEST_INDEX_ACCOUNT + "/account " +
+                TEST_INDEX_ACCOUNT +
                 " where floor(split(address,' ')[0]+0) = floor(split(address,' ')[0]+0) limit 1000  ";
 
         Select select = parser.parseSelect((SQLQueryExpr) queryToExpr(query));
@@ -205,7 +199,7 @@ public class SQLFunctionsTest {
         Assert.assertTrue(((Condition) (where.getWheres().get(0))).getValue() instanceof ScriptFilter);
         ScriptFilter scriptFilter = (ScriptFilter) (((Condition) (where.getWheres().get(0))).getValue());
         Assert.assertTrue(scriptFilter.getScript().contains("doc['address'].value.split(' ')[0]"));
-        Pattern pattern = Pattern.compile("floor_\\d+ == floor_\\d+");
+        Pattern pattern = Pattern.compile("\\(\\(Comparable\\)floor_\\d+\\).compareTo\\(floor_\\d+\\) == 0");
         Matcher matcher = pattern.matcher(scriptFilter.getScript());
         Assert.assertTrue(matcher.find());
     }
@@ -215,7 +209,7 @@ public class SQLFunctionsTest {
 
         String query = "SELECT " +
                 " * from " +
-                TEST_INDEX_ACCOUNT + "/account " +
+                TEST_INDEX_ACCOUNT +
                 " where a = b limit 1000  ";
 
         SearchDao searchDao = MainTestSuite.getSearchDao() != null ? MainTestSuite.getSearchDao() : getSearchDao();
@@ -235,7 +229,7 @@ public class SQLFunctionsTest {
         //here is a bug,csv field with spa
         String query = "SELECT " +
                 " concat_ws('-',age,address),address from " +
-                TEST_INDEX_ACCOUNT + "/account " +
+                TEST_INDEX_ACCOUNT +
                 " limit 10  ";
 
         CSVResult csvResult = getCsvResult(false, query);
@@ -245,6 +239,36 @@ public class SQLFunctionsTest {
         Assert.assertTrue(contents.get(0).contains("-"));
     }
 
+    @Test
+    public void functionLogs() throws Exception {
+        String query = "SELECT log10(100) as a, log(1) as b, log(2, 4) as c, log2(8) as d from "
+                + TEST_INDEX_ACCOUNT + " limit 1";
+        CSVResult csvResult = getCsvResult(false, query);
+        List<String> content = csvResult.getLines();
+        Assert.assertTrue(content.toString().contains("2.0"));
+        Assert.assertTrue(content.toString().contains("1.0"));
+        Assert.assertTrue(content.toString().contains("0.0"));
+        Assert.assertTrue(content.toString().contains("3.0"));
+    }
+
+    @Test
+    public void functionPow() throws Exception {
+        String query = "SELECT pow(account_number, 2) as key,"+
+                "abs(age - 60) as new_age from " + TEST_INDEX_ACCOUNT + " where _id=25";
+        CSVResult csvResult = getCsvResult(false, query);
+        List<String> content = csvResult.getLines();
+        Assert.assertTrue(content.toString().contains("625"));
+        Assert.assertTrue(content.toString().contains("21"));
+    }
+
+    @Test
+    public void testSumTwoFields() throws Exception {
+        String query = "SELECT SUM(account_number+age) AS sum from " + TEST_INDEX_PEOPLE;
+        CSVResult csvResult = getCsvResult(false, query);
+        List<String> content = csvResult.getLines();
+        Assert.assertTrue(content.toString().contains("752"));
+    }
+
     // todo: change when split is back on language
 //    @Test
 //    public void split_field() throws Exception {
@@ -252,7 +276,7 @@ public class SQLFunctionsTest {
 //        //here is a bug,csv field with spa
 //        String query = "SELECT " +
 //                " split(address,' ')[0],age from " +
-//                TestsConstants.TEST_INDEX + "/account where address is not null " +
+//                TestsConstants.TEST_INDEX + " where address is not null " +
 //                " limit 10  ";
 //        SearchDao searchDao = MainTestSuite.getSearchDao() != null ? MainTestSuite.getSearchDao() : getSearchDao();
 //        System.out.println(searchDao.explain(query).explain().explain());
@@ -274,14 +298,11 @@ public class SQLFunctionsTest {
         SearchDao searchDao = MainTestSuite.getSearchDao() != null ? MainTestSuite.getSearchDao() : getSearchDao();
         QueryAction queryAction = searchDao.explain(query);
         Object execution = QueryActionElasticExecutor.executeAnyAction(searchDao.getClient(), queryAction);
-        return new CSVResultsExtractor(includeScore, includeType, includeId).extractResults(execution, flat, ",");
+        return new CSVResultsExtractor(includeScore, includeType, includeId, false, queryAction).extractResults(execution, flat, ",", false);
     }
 
 
     private SearchDao getSearchDao() throws UnknownHostException {
-        Settings settings = Settings.builder().put("client.transport.ignore_cluster_name", true).build();
-        Client client = new PreBuiltTransportClient(settings).
-                addTransportAddress(MainTestSuite.getTransportAddress());
-        return new SearchDao(client);
+        return new SearchDao(MainTestSuite.getClient());
     }
 }

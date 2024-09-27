@@ -1,17 +1,12 @@
 package org.elasticsearch.plugin.nlpcn;
 
-import com.google.common.collect.ImmutableMap;
+import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.action.search.SearchType;
-import org.elasticsearch.client.Client;
-import org.elasticsearch.common.text.Text;
-import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentType;
-
-import org.elasticsearch.rest.BytesRestResponse;
+import org.elasticsearch.client.internal.Client;
+import org.elasticsearch.rest.RestResponse;
+import org.elasticsearch.xcontent.XContentBuilder;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.rest.RestChannel;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.SearchHit;
@@ -27,7 +22,13 @@ import org.nlpcn.es4sql.query.join.NestedLoopsElasticRequestBuilder;
 import org.nlpcn.es4sql.query.join.TableInJoinRequestBuilder;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Created by Eliran on 15/9/2015.
@@ -50,20 +51,21 @@ public abstract class ElasticJoinExecutor implements ElasticHitsExecutor {
 
     public void  sendResponse(RestChannel channel){
         try {
-            String json = ElasticUtils.hitsAsStringResult(results,metaResults);
-            BytesRestResponse bytesRestResponse = new BytesRestResponse(RestStatus.OK, json);
+            XContentBuilder builder = ElasticUtils.hitsAsXContentBuilder(results,metaResults);
+            RestResponse bytesRestResponse = new RestResponse(RestStatus.OK, builder);
             channel.sendResponse(bytesRestResponse);
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
+    @Override
     public void run() throws IOException, SqlParseException {
         long timeBefore = System.currentTimeMillis();
         List<SearchHit> combinedSearchHits =  innerRun();
         int resultsSize = combinedSearchHits.size();
         SearchHit[] hits = combinedSearchHits.toArray(new SearchHit[resultsSize]);
-        this.results = new SearchHits(hits, resultsSize,1.0f);
+        this.results = SearchHits.unpooled(hits, new TotalHits(resultsSize, TotalHits.Relation.EQUAL_TO), 1.0f);
         long joinTimeInMilli = System.currentTimeMillis() - timeBefore;
         this.metaResults.setTookImMilli(joinTimeInMilli);
     }
@@ -71,6 +73,7 @@ public abstract class ElasticJoinExecutor implements ElasticHitsExecutor {
 
     protected abstract List<SearchHit> innerRun() throws IOException, SqlParseException ;
 
+    @Override
     public SearchHits getHits(){
         return results;
     }
@@ -166,10 +169,9 @@ public abstract class ElasticJoinExecutor implements ElasticHitsExecutor {
 
     protected SearchHit createUnmachedResult( List<Field> secondTableReturnedFields, int docId, String t1Alias, String t2Alias, SearchHit hit) {
         String unmatchedId = hit.getId() + "|0";
-        Text unamatchedType = new Text(hit.getType() + "|null");
 
-        SearchHit searchHit = new SearchHit(docId, unmatchedId, unamatchedType, hit.getFields());
-
+        SearchHit searchHit = SearchHit.unpooled(docId, unmatchedId);
+        searchHit.addDocumentFields(hit.getDocumentFields(), Collections.emptyMap());
         searchHit.sourceRef(hit.getSourceRef());
         searchHit.getSourceAsMap().clear();
         searchHit.getSourceAsMap().putAll(hit.getSourceAsMap());

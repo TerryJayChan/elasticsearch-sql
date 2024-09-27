@@ -1,10 +1,8 @@
 package org.nlpcn.es4sql.domain.hints;
 
-
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fasterxml.jackson.dataformat.yaml.YAMLParser;
-import org.elasticsearch.common.xcontent.NamedXContentRegistry;
-import org.elasticsearch.common.xcontent.yaml.YamlXContentParser;
+import org.elasticsearch.xcontent.XContentParser;
+import org.elasticsearch.xcontent.XContentParserConfiguration;
+import org.elasticsearch.xcontent.yaml.YamlXContent;
 import org.nlpcn.es4sql.exception.SqlParseException;
 
 import java.io.IOException;
@@ -60,15 +58,17 @@ public class HintFactory {
             int multiSearchSize = Integer.parseInt(number[0]);
             return new Hint(HintType.NL_MULTISEARCH_SIZE,new Object[]{multiSearchSize});
         }
-        if(hintAsString.startsWith("! USE_SCROLL")){
-            String[] scrollParams = getParamsFromHint(hintAsString,"! USE_SCROLL");
-            int docsPerShardFetch = 50;
-            int timeout = 60000;
-            if(scrollParams != null && scrollParams.length ==2) {
-                docsPerShardFetch = Integer.parseInt(scrollParams[0]);
-                timeout = Integer.parseInt(scrollParams[1]);
+        if (hintAsString.startsWith("! USE_SCROLL")) {
+            String[] scrollParams = getParamsFromHint(hintAsString, "! USE_SCROLL");
+            if (scrollParams != null && scrollParams.length == 2) {
+                String param = scrollParams[0];
+                return new Hint(HintType.USE_SCROLL,
+                        new Object[]{(param.startsWith("\"") && param.endsWith("\"")) || (param.startsWith("'") && param.endsWith("'")) ? param.substring(1, param.length() - 1) :
+                                Integer.parseInt(param),
+                                Integer.parseInt(scrollParams[1])});
+            } else {
+                return new Hint(HintType.USE_SCROLL, new Object[]{50, 60000});
             }
-            return new Hint(HintType.USE_SCROLL, new Object[]{docsPerShardFetch,timeout});
         }
         if(hintAsString.startsWith("! IGNORE_UNAVAILABLE")){
             return new Hint(HintType.IGNORE_UNAVAILABLE,null);
@@ -94,13 +94,9 @@ public class HintFactory {
                     builder.append(heighlights[i]);
                 }
                 String heighlightParam = builder.toString();
-                YAMLFactory yamlFactory = new YAMLFactory();
-                YAMLParser yamlParser = null;
-                try {
-                yamlParser = yamlFactory.createParser(heighlightParam.toCharArray());
-                YamlXContentParser yamlXContentParser = new YamlXContentParser(NamedXContentRegistry.EMPTY, yamlParser);
-                Map<String, Object> map = yamlXContentParser.map();
-                hintParams.add(map);
+                try (XContentParser parser = YamlXContent.yamlXContent.createParser(XContentParserConfiguration.EMPTY, heighlightParam)) {
+                    Map<String, Object> map = parser.map();
+                    hintParams.add(map);
                 } catch (IOException e) {
                     throw new SqlParseException("could not parse heighlight hint: " + e.getMessage());
                 }
@@ -148,13 +144,55 @@ public class HintFactory {
             String postFilter = getParamFromHint(hintAsString, "! POST_FILTER");
             return new Hint(HintType.POST_FILTER, new String[]{postFilter});
         }
+        if (hintAsString.startsWith("! STATS")) {
+            String[] statsGroups = getParamsFromHint(hintAsString, "! STATS");
+            return new Hint(HintType.STATS, statsGroups);
+        }
+        if (hintAsString.startsWith("! CONFLICTS")) {
+            String conflictsParam = getParamFromHint(hintAsString, "! CONFLICTS");
+            return new Hint(HintType.CONFLICTS, new String[] { conflictsParam });
+        }
+        if (hintAsString.startsWith("! PREFERENCE")) {
+            String preferenceParam = getParamFromHint(hintAsString, "! PREFERENCE");
+            return new Hint(HintType.PREFERENCE, new String[]{preferenceParam});
+        }
+        if (hintAsString.startsWith("! TRACK_TOTAL_HITS")) {
+            String trackTotalTitsParam = getParamFromHint(hintAsString, "! TRACK_TOTAL_HITS");
+            return new Hint(HintType.TRACK_TOTAL_HITS, new String[]{trackTotalTitsParam});
+        }
+        if (hintAsString.startsWith("! TIMEOUT")) {
+            String timeoutParam = getParamFromHint(hintAsString, "! TIMEOUT");
+            return new Hint(HintType.TIMEOUT, new String[]{timeoutParam});
+        }
+        if (hintAsString.startsWith("! INDICES_OPTIONS")) {
+            String indicesOptions = getParamFromHint(hintAsString, "! INDICES_OPTIONS");
+            if (!indicesOptions.startsWith("{")) {
+                indicesOptions = "{" + indicesOptions;
+            }
+            if (!indicesOptions.endsWith("}")) {
+                indicesOptions = indicesOptions + "}";
+            }
+            return new Hint(HintType.INDICES_OPTIONS, new Object[]{indicesOptions});
+        }
+        if (hintAsString.startsWith("! MIN_SCORE")) {
+            String minScoreParam = getParamFromHint(hintAsString, "! MIN_SCORE");
+            return new Hint(HintType.MIN_SCORE, new String[]{minScoreParam});
+        }
+        if (hintAsString.startsWith("! SEARCH_AFTER")) {
+            String[] searchAfterParams = getParamsFromHint(hintAsString, "! SEARCH_AFTER");
+            return new Hint(HintType.SEARCH_AFTER, searchAfterParams);
+        }
+        if (hintAsString.startsWith("! RUNTIME_MAPPINGS")) {
+            String runtimeMappings = getParamFromHint(hintAsString, "! RUNTIME_MAPPINGS");
+            return new Hint(HintType.RUNTIME_MAPPINGS, new String[]{runtimeMappings});
+        }
 
         return null;
     }
 
     private static String getParamFromHint(String hint, String prefix) {
         if (!hint.contains("(")) return null;
-        return hint.replace(prefix, "").replaceAll("\\s*\\(\\s*", "").replaceAll("\\s*\\,\\s*", ",").replaceAll("\\s*\\)\\s*", "");
+        return hint.replace(prefix, "").replaceAll("^\\s*\\(\\s*", "").replaceAll("\\s*\\,\\s*", ",").replaceAll("\\s*\\)\\s*$", "");
     }
     private static String[] getParamsFromHint(String hint, String prefix) {
         String param = getParamFromHint(hint, prefix);

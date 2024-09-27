@@ -7,7 +7,14 @@ import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.nlpcn.es4sql.domain.*;
+import org.nlpcn.es4sql.domain.Condition;
+import org.nlpcn.es4sql.domain.Field;
+import org.nlpcn.es4sql.domain.From;
+import org.nlpcn.es4sql.domain.JoinSelect;
+import org.nlpcn.es4sql.domain.MethodField;
+import org.nlpcn.es4sql.domain.Order;
+import org.nlpcn.es4sql.domain.Select;
+import org.nlpcn.es4sql.domain.Where;
 import org.nlpcn.es4sql.domain.hints.Hint;
 import org.nlpcn.es4sql.domain.hints.HintType;
 import org.nlpcn.es4sql.exception.SqlParseException;
@@ -26,7 +33,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static org.nlpcn.es4sql.TestsConstants.*;
+import static org.nlpcn.es4sql.TestsConstants.TEST_INDEX_ACCOUNT;
+import static org.nlpcn.es4sql.TestsConstants.TEST_INDEX_DOG;
+import static org.nlpcn.es4sql.TestsConstants.TEST_INDEX_GAME_OF_THRONES;
+import static org.nlpcn.es4sql.TestsConstants.TEST_INDEX_ODBC;
 
 /**
  * Created by Eliran on 21/8/2015.
@@ -373,7 +383,7 @@ public class SqlParserTests {
         List<Field> fields = select.getFields();
         Assert.assertEquals(1, fields.size());
         Field field = fields.get(0);
-        Assert.assertEquals("MAX(@field)", field.toString());
+        Assert.assertEquals("max(@field)", field.toString());
     }
 
     @Test
@@ -573,8 +583,8 @@ public class SqlParserTests {
         Select select = parser.parseSelect((SQLQueryExpr) sqlExpr);
         List<Field> fields = select.getFields();
         Assert.assertTrue(fields.size() == 2);
-        Assert.assertEquals("COUNT(*)", fields.get(0).toString());
-        Assert.assertEquals("SUM(size)", fields.get(1).toString());
+        Assert.assertEquals("count(*)", fields.get(0).toString());
+        Assert.assertEquals("sum(size)", fields.get(1).toString());
         List<List<Field>> groups = select.getGroupBys();
         Assert.assertTrue(groups.size() == 1);
         Assert.assertTrue(groups.get(0).size() == 1);
@@ -814,11 +824,11 @@ public class SqlParserTests {
 
     @Test
     public void complexNestedAndOtherQuery() throws SqlParseException {
-        String query = "select * from x where nested('path',path.x=3) and y=3";
+        String query = "select * from x where nested('path',path.x=3,'{\"from\":0}',score_mode=max) and y=3";
         Select select = parser.parseSelect((SQLQueryExpr) queryToExpr(query));
         LinkedList<Where> wheres = select.getWhere().getWheres();
         Assert.assertEquals(2, wheres.size());
-        Assert.assertEquals("AND path NESTED_COMPLEX AND ( AND path.x EQ 3 ) ", wheres.get(0).toString());
+        Assert.assertEquals("nested condition on path:path inner_hits:{\"from\":0} score_mode:Max AND path NESTED_COMPLEX AND ( AND path.x EQ 3 ) ", wheres.get(0).toString());
         Assert.assertEquals("AND y EQ 3", wheres.get(1).toString());
     }
 

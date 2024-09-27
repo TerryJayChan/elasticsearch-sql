@@ -1,10 +1,13 @@
 package org.nlpcn.es4sql.parse;
 
 import com.alibaba.druid.sql.ast.SQLExpr;
+import com.alibaba.druid.sql.ast.expr.SQLBinaryOpExpr;
 import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.druid.sql.ast.expr.SQLPropertyExpr;
 import com.alibaba.druid.sql.ast.expr.SQLTextLiteralExpr;
+import org.apache.lucene.search.join.ScoreMode;
+import org.elasticsearch.index.query.NestedQueryBuilder;
 import org.nlpcn.es4sql.Util;
 import org.nlpcn.es4sql.domain.Where;
 import org.nlpcn.es4sql.exception.SqlParseException;
@@ -21,6 +24,9 @@ public class NestedType {
     private boolean reverse;
     private boolean simple;
 
+    private String innerHits;
+    private ScoreMode scoreMode = ScoreMode.None;
+
     public boolean tryFillFromExpr(SQLExpr expr) throws SqlParseException {
         if (!(expr instanceof SQLMethodInvokeExpr)) return false;
         SQLMethodInvokeExpr method = (SQLMethodInvokeExpr) expr;
@@ -30,12 +36,28 @@ public class NestedType {
         reverse = methodNameLower.equals("reverse_nested");
 
         List<SQLExpr> parameters = method.getParameters();
-        if (parameters.size() != 2 && parameters.size() != 1)
-            throw new SqlParseException("on nested object only allowed 2 parameters (field,path)/(path,conditions..) or 1 parameter (field) ");
+
+        //
+        parameters.removeIf(e -> {
+            if (e instanceof SQLBinaryOpExpr && "score_mode".equals(((SQLBinaryOpExpr) e).getLeft().toString())) {
+                scoreMode = NestedQueryBuilder.parseScoreMode(Util.expr2Object(((SQLBinaryOpExpr) e).getRight()).toString());
+                return true;
+            }
+            return false;
+        });
+
+        int size = parameters.size();
+        if (size != 3 && size != 2 && size != 1)
+            throw new SqlParseException("on nested object only allowed 3 parameters (path,conditions..,inner_hits) or 2 parameters (field,path)/(path,conditions..) or 1 parameter (field) ");
+
+        // inner_hits
+        if (size == 3) {
+            this.innerHits = Util.extendedToString(parameters.remove(--size));
+        }
 
         String field = Util.extendedToString(parameters.get(0));
         this.field = field;
-        if (parameters.size() == 1) {
+        if (size == 1) {
             //calc path myself..
             if (!field.contains(".")) {
                 if (!reverse)
@@ -51,7 +73,7 @@ public class NestedType {
 
             }
 
-        } else if (parameters.size() == 2) {
+        } else if (size == 2) {
             SQLExpr secondParameter = parameters.get(1);
             if(secondParameter instanceof SQLTextLiteralExpr || secondParameter instanceof SQLIdentifierExpr || secondParameter instanceof SQLPropertyExpr) {
 
@@ -82,5 +104,17 @@ public class NestedType {
 
     public boolean isReverse() {
         return reverse;
+    }
+
+    public String getInnerHits() {
+        return innerHits;
+    }
+
+    public void setInnerHits(String innerHits) {
+        this.innerHits = innerHits;
+    }
+
+    public ScoreMode getScoreMode() {
+        return scoreMode;
     }
 }

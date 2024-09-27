@@ -1,22 +1,45 @@
 package org.nlpcn.es4sql;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import com.alibaba.druid.sql.ast.expr.*;
+import com.alibaba.druid.sql.ast.SQLExpr;
+import com.alibaba.druid.sql.ast.SQLObject;
+import com.alibaba.druid.sql.ast.expr.SQLAllColumnExpr;
+import com.alibaba.druid.sql.ast.expr.SQLBinaryOpExpr;
+import com.alibaba.druid.sql.ast.expr.SQLBooleanExpr;
+import com.alibaba.druid.sql.ast.expr.SQLCharExpr;
+import com.alibaba.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.druid.sql.ast.expr.SQLIntegerExpr;
+import com.alibaba.druid.sql.ast.expr.SQLNullExpr;
+import com.alibaba.druid.sql.ast.expr.SQLNumericLiteralExpr;
+import com.alibaba.druid.sql.ast.expr.SQLPropertyExpr;
+import com.alibaba.druid.sql.ast.expr.SQLTextLiteralExpr;
+import com.alibaba.druid.sql.ast.expr.SQLValuableExpr;
+import com.alibaba.druid.sql.ast.expr.SQLVariantRefExpr;
 import com.alibaba.druid.sql.ast.statement.SQLJoinTableSource;
 import com.alibaba.druid.sql.ast.statement.SQLSelectQueryBlock;
 import com.alibaba.druid.sql.ast.statement.SQLTableSource;
 import com.alibaba.druid.sql.ast.statement.SQLUnionQuery;
-import org.nlpcn.es4sql.domain.Field;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
+import org.elasticsearch.search.aggregations.PipelineAggregationBuilder;
+import org.elasticsearch.xcontent.NamedXContentRegistry;
+import org.elasticsearch.xcontent.XContentParser;
+import org.elasticsearch.xcontent.XContentParserConfiguration;
+import org.elasticsearch.xcontent.json.JsonXContent;
+import org.elasticsearch.index.query.AbstractQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.plugin.nlpcn.NamedXContentRegistryHolder;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.nlpcn.es4sql.domain.KVValue;
 import org.nlpcn.es4sql.exception.SqlParseException;
 
-import com.alibaba.druid.sql.ast.*;
-
+import java.io.IOException;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Util {
     public static String joiner(List<KVValue> lists, String oper) {
@@ -75,6 +98,8 @@ public class Util {
             value = "*";
         } else if (expr instanceof SQLValuableExpr) {
             value = ((SQLValuableExpr) expr).getValue();
+        } else if (expr instanceof SQLBooleanExpr) {
+            value = ((SQLBooleanExpr) expr).getValue();
         } else {
             //throw new SqlParseException("can not support this type " + expr.getClass());
         }
@@ -101,8 +126,14 @@ public class Util {
             return ((SQLNumericLiteralExpr) expr).getNumber();
         } else if (expr instanceof SQLNullExpr) {
             return ((SQLNullExpr) expr).toString().toLowerCase();
+        } else if (expr instanceof  SQLBinaryOpExpr) {
+            //zhongshu-comment 该分支由忠树添加
+            String left = "doc['" + ((SQLBinaryOpExpr) expr).getLeft().toString() + "'].value";
+            String operator = ((SQLBinaryOpExpr) expr).getOperator().getName();
+            String right = "doc['" + ((SQLBinaryOpExpr) expr).getRight().toString() + "'].value";
+            return left + operator + right;
         }
-        throw new SqlParseException("could not parse sqlBinaryOpExpr need to be identifier/valuable got" + expr.getClass().toString() + " with value:" + expr.toString());
+        throw new SqlParseException("could not parse sqlBinaryOpExpr need to be identifier/valuable got " + expr.getClass().toString() + " with value:" + expr.toString());
     }
 
     public static boolean isFromJoinOrUnionTable(SQLExpr expr) {
@@ -209,4 +240,53 @@ public class Util {
         return false;
     }
 
+    public static String quoteString(String str) {
+        return Objects.nonNull(str) ? String.format("\"%s\"", Strings.replace(str, "\"", "\"\"")) : str;
+    }
+
+    public static QueryBuilder parseQueryBuilder(QueryBuilder queryBuilder) {
+        NamedXContentRegistry xContentRegistry = NamedXContentRegistryHolder.get();
+        if (Objects.isNull(xContentRegistry)) {
+            return queryBuilder;
+        }
+
+        String json = Strings.toString(queryBuilder);
+        try (XContentParser parser = JsonXContent.jsonXContent.createParser(XContentParserConfiguration.EMPTY.withRegistry(xContentRegistry).withDeprecationHandler(LoggingDeprecationHandler.INSTANCE), json)) {
+            return AbstractQueryBuilder.parseTopLevelQuery(parser);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("failed to parse query", e);
+        }
+    }
+
+    public static AggregationBuilder parseAggregationBuilder(AggregationBuilder aggregationBuilder) {
+        NamedXContentRegistry xContentRegistry = NamedXContentRegistryHolder.get();
+        if (Objects.isNull(xContentRegistry)) {
+            return aggregationBuilder;
+        }
+
+        String json = Strings.toString(aggregationBuilder);
+        try (XContentParser parser = JsonXContent.jsonXContent.createParser(XContentParserConfiguration.EMPTY.withRegistry(xContentRegistry).withDeprecationHandler(LoggingDeprecationHandler.INSTANCE), json)) {
+            parser.nextToken();
+            AggregatorFactories.Builder builder = AggregatorFactories.parseAggregators(parser);
+            return builder.getAggregatorFactories().iterator().next();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("failed to parse aggregation", e);
+        }
+    }
+
+    public static PipelineAggregationBuilder parsePipelineAggregationBuilder(PipelineAggregationBuilder pipelineAggregationBuilder) {
+        NamedXContentRegistry xContentRegistry = NamedXContentRegistryHolder.get();
+        if (Objects.isNull(xContentRegistry)) {
+            return pipelineAggregationBuilder;
+        }
+
+        String json = Strings.toString(pipelineAggregationBuilder);
+        try (XContentParser parser = JsonXContent.jsonXContent.createParser(XContentParserConfiguration.EMPTY.withRegistry(xContentRegistry).withDeprecationHandler(LoggingDeprecationHandler.INSTANCE), json)) {
+            parser.nextToken();
+            AggregatorFactories.Builder builder = AggregatorFactories.parseAggregators(parser);
+            return builder.getPipelineAggregatorFactories().iterator().next();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("failed to parse pipeline aggregation", e);
+        }
+    }
 }

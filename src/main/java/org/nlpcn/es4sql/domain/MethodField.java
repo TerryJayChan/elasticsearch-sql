@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.nlpcn.es4sql.Util;
+import org.nlpcn.es4sql.parse.NestedType;
 
 /**
  * 搜索域
@@ -14,7 +15,7 @@ import org.nlpcn.es4sql.Util;
  */
 public class MethodField extends Field {
 	private List<KVValue> params = null;
-	private String option;
+	private String option; //zhongshu-comment 暂时只用于DISTINCT去重查询
 
 	public MethodField(String name, List<KVValue> params, String option, String alias) {
 		super(name, alias);
@@ -44,12 +45,13 @@ public class MethodField extends Field {
         return paramsAsMap;
     }
 
+    //zhongshu-comment 在这里拼上script(....)
 	@Override
 	public String toString() {
 		if (option != null) {
 			return this.name + "(" + option + " " + Util.joiner(params, ",") + ")";
 		}
-		return this.name + "(" + Util.joiner(params, ",") + ")";
+		return this.name + "(" + Util.joiner(params, ",") + ")";//zhongshu-comment 报错
 	}
 
 	public String getOption() {
@@ -75,11 +77,14 @@ public class MethodField extends Field {
     @Override
     public String getNestedPath() {
         if(!this.isNested()) return null;
-        if(this.isReverseNested()){
-            String reverseNestedPath = this.getParamsAsMap().get("reverse_nested").toString();
+        Map<String, Object> paramsMap = this.getParamsAsMap();
+        if (this.isReverseNested()) {
+            Object nested = paramsMap.get("reverse_nested");
+            String reverseNestedPath = nested instanceof NestedType ? ((NestedType) nested).path : nested.toString();
             return reverseNestedPath.isEmpty() ? null : reverseNestedPath;
         }
-        return this.getParamsAsMap().get("nested").toString();
+        Object nested = paramsMap.get("nested");
+        return nested instanceof NestedType ? ((NestedType) nested).path : nested.toString();
     }
 
     @Override

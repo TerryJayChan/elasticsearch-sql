@@ -1,0 +1,30 @@
+{
+  "from": 0,
+  "size": 1000,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "bool": {
+            "must": [
+              {
+                "multi_match": {
+                  "query": "this is a test",
+                  "fields": [
+                    "message^1.0",
+                    "subject^3.0"
+                  ],
+                  "operator": "AND",
+                  "analyzer": "standard",
+                  "tie_breaker": 0.3
+                }
+              }
+            ],
+            "boost": 1.0
+          }
+        }
+      ],
+      "boost": 1.0
+    }
+  }
+}

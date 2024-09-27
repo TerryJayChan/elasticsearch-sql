@@ -1,11 +1,5 @@
 package org.nlpcn.es4sql;
 
-import static org.nlpcn.es4sql.TestsConstants.*;
-
-import java.io.IOException;
-import java.sql.SQLFeatureNotSupportedException;
-import java.util.Set;
-
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
@@ -14,11 +8,17 @@ import org.junit.Test;
 import org.nlpcn.es4sql.exception.SqlParseException;
 import org.nlpcn.es4sql.query.SqlElasticSearchRequestBuilder;
 
+import java.io.IOException;
+import java.sql.SQLFeatureNotSupportedException;
+import java.util.Set;
+
+import static org.nlpcn.es4sql.TestsConstants.TEST_INDEX_ACCOUNT;
+
 public class SourceFieldTest {
 
 	@Test
 	public void includeTest() throws IOException, SqlParseException, SQLFeatureNotSupportedException {
-		SearchHits response = query(String.format("SELECT include('*name','*ge'),include('b*'),include('*ddre*'),include('gender') FROM %s/account LIMIT 1000", TEST_INDEX_ACCOUNT));
+		SearchHits response = query(String.format("SELECT include('*name','*ge'),include('b*'),include('*ddre*'),include('gender') FROM %s LIMIT 1000", TEST_INDEX_ACCOUNT));
 		for (SearchHit hit : response.getHits()) {
 			Set<String> keySet = hit.getSourceAsMap().keySet();
 			for (String field : keySet) {
@@ -31,7 +31,7 @@ public class SourceFieldTest {
 	@Test
 	public void excludeTest() throws SqlParseException, SQLFeatureNotSupportedException {
 
-		SearchHits response = query(String.format("SELECT exclude('*name','*ge'),exclude('b*'),exclude('*ddre*'),exclude('gender') FROM %s/account LIMIT 1000", TEST_INDEX_ACCOUNT));
+		SearchHits response = query(String.format("SELECT exclude('*name','*ge'),exclude('b*'),exclude('*ddre*'),exclude('gender') FROM %s LIMIT 1000", TEST_INDEX_ACCOUNT));
 
 		for (SearchHit hit : response.getHits()) {
 			Set<String> keySet = hit.getSourceAsMap().keySet();
@@ -44,7 +44,7 @@ public class SourceFieldTest {
 	@Test
 	public void allTest() throws SqlParseException, SQLFeatureNotSupportedException {
 
-		SearchHits response = query(String.format("SELECT exclude('*name','*ge'),include('b*'),exclude('*ddre*'),include('gender') FROM %s/account LIMIT 1000", TEST_INDEX_ACCOUNT));
+		SearchHits response = query(String.format("SELECT exclude('*name','*ge'),include('b*'),exclude('*ddre*'),include('gender') FROM %s LIMIT 1000", TEST_INDEX_ACCOUNT));
 
 		for (SearchHit hit : response.getHits()) {
 			Set<String> keySet = hit.getSourceAsMap().keySet();

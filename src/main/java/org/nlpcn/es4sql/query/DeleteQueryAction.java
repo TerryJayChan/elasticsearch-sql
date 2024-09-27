@@ -1,17 +1,16 @@
 package org.nlpcn.es4sql.query;
 
 
+import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.client.Client;
-
 import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.index.reindex.DeleteByQueryAction;
 import org.elasticsearch.index.reindex.DeleteByQueryRequest;
 import org.elasticsearch.index.reindex.DeleteByQueryRequestBuilder;
 import org.nlpcn.es4sql.domain.Delete;
 import org.nlpcn.es4sql.domain.Where;
+import org.nlpcn.es4sql.domain.hints.Hint;
+import org.nlpcn.es4sql.domain.hints.HintType;
 import org.nlpcn.es4sql.exception.SqlParseException;
-
 import org.nlpcn.es4sql.query.maker.QueryMaker;
 
 public class DeleteQueryAction extends QueryAction {
@@ -26,10 +25,19 @@ public class DeleteQueryAction extends QueryAction {
 
 	@Override
 	public SqlElasticDeleteByQueryRequestBuilder explain() throws SqlParseException {
-		this.request = new DeleteByQueryRequestBuilder(client, DeleteByQueryAction.INSTANCE);
+		this.request = new DeleteByQueryRequestBuilder(client);
 
 		setIndicesAndTypes();
 		setWhere(delete.getWhere());
+
+		// maximum number of processed documents
+		if (delete.getRowCount() > -1) {
+			request.size(delete.getRowCount());
+		}
+
+		// set conflicts param
+		updateRequestWithConflicts();
+
         SqlElasticDeleteByQueryRequestBuilder deleteByQueryRequestBuilder = new SqlElasticDeleteByQueryRequestBuilder(request);
 		return deleteByQueryRequestBuilder;
 	}
@@ -42,10 +50,6 @@ public class DeleteQueryAction extends QueryAction {
 
         DeleteByQueryRequest innerRequest = request.request();
         innerRequest.indices(query.getIndexArr());
-        String[] typeArr = query.getTypeArr();
-        if (typeArr!=null){
-            innerRequest.getSearchRequest().types(typeArr);
-        }
 //		String[] typeArr = query.getTypeArr();
 //		if (typeArr != null) {
 //            request.set(typeArr);
@@ -66,6 +70,19 @@ public class DeleteQueryAction extends QueryAction {
 			request.filter(whereQuery);
 		} else {
 			request.filter(QueryBuilders.matchAllQuery());
+		}
+	}
+
+	private void updateRequestWithConflicts() {
+		for (Hint hint : delete.getHints()) {
+			if (hint.getType() == HintType.CONFLICTS && hint.getParams() != null && 0 < hint.getParams().length) {
+				String conflicts = hint.getParams()[0].toString();
+				switch (conflicts) {
+					case "proceed": request.abortOnVersionConflict(false); return;
+					case "abort": request.abortOnVersionConflict(true); return;
+					default: throw new IllegalArgumentException("conflicts may only be \"proceed\" or \"abort\" but was [" + conflicts + "]");
+				}
+			}
 		}
 	}
 

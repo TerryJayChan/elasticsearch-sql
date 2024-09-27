@@ -1,10 +1,12 @@
 package org.elasticsearch.plugin.nlpcn;
 
 import com.alibaba.druid.sql.ast.statement.SQLJoinTableSource;
-import org.elasticsearch.action.search.*;
-import org.elasticsearch.client.Client;
-import org.elasticsearch.common.text.Text;
-import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.action.search.MultiSearchRequest;
+import org.elasticsearch.action.search.MultiSearchResponse;
+import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.client.internal.Client;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.nlpcn.es4sql.domain.Condition;
@@ -16,6 +18,7 @@ import org.nlpcn.es4sql.query.join.NestedLoopsElasticRequestBuilder;
 import org.nlpcn.es4sql.query.join.TableInJoinRequestBuilder;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -114,7 +117,8 @@ public class NestedLoopsElasticExecutor extends ElasticJoinExecutor {
 
     private SearchHit getMergedHit(int currentCombinedResults, String t1Alias, String t2Alias, SearchHit hitFromFirstTable, SearchHit matchedHit) {
         onlyReturnedFields(matchedHit.getSourceAsMap(), nestedLoopsRequest.getSecondTable().getReturnedFields(),nestedLoopsRequest.getSecondTable().getOriginalSelect().isSelectAll());
-        SearchHit searchHit = new SearchHit(currentCombinedResults, hitFromFirstTable.getId() + "|" + matchedHit.getId(), new Text(hitFromFirstTable.getType() + "|" + matchedHit.getType()), hitFromFirstTable.getFields());
+        SearchHit searchHit = SearchHit.unpooled(currentCombinedResults, hitFromFirstTable.getId() + "|" + matchedHit.getId());
+        searchHit.addDocumentFields(hitFromFirstTable.getDocumentFields(), Collections.emptyMap());
         searchHit.sourceRef(hitFromFirstTable.getSourceRef());
         searchHit.getSourceAsMap().clear();
         searchHit.getSourceAsMap().putAll(hitFromFirstTable.getSourceAsMap());
@@ -184,7 +188,7 @@ public class NestedLoopsElasticExecutor extends ElasticJoinExecutor {
             else {
                 //scroll request with max.
                 responseWithHits = scrollOneTimeWithMax(client,tableRequest);
-                if(responseWithHits.getHits().getTotalHits() < MAX_RESULTS_ON_ONE_FETCH)
+                if(responseWithHits.getHits().getTotalHits().value < MAX_RESULTS_ON_ONE_FETCH)
                     needScrollForFirstTable = true;
             }
 

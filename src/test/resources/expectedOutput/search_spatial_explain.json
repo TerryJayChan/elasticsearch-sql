@@ -1,6 +1,6 @@
 {
   "from" : 0,
-  "size" : 200,
+  "size" : 1000,
   "query" : {
       "bool" : {
             "filter" : [
@@ -11,8 +11,7 @@
                                 "geo_shape" : {
                                     "place" : {
                                         "shape" : {
-                                            "type" : "polygon",
-                                            "orientation" : "right",
+                                            "type" : "Polygon",
                                             "coordinates" : [
                                                 [
                                                     [
@@ -45,12 +44,10 @@
                                 }
                             }
                         ],
-                        "adjust_pure_negative" : true,
                         "boost" : 1.0
                     }
                 }
             ],
-            "adjust_pure_negative" : true,
             "boost" : 1.0
         }
     }

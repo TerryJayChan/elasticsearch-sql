@@ -1,55 +1,90 @@
 package org.elasticsearch.plugin.nlpcn.executors;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import org.elasticsearch.action.admin.indices.get.GetIndexResponse;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.cluster.metadata.MappingMetadata;
 import org.elasticsearch.common.document.DocumentField;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.aggregations.Aggregation;
-import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.InternalAggregation;
+import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketsAggregation;
 import org.elasticsearch.search.aggregations.bucket.SingleBucketAggregation;
+import org.elasticsearch.search.aggregations.metrics.ExtendedStats;
+import org.elasticsearch.search.aggregations.metrics.GeoBounds;
+import org.elasticsearch.search.aggregations.metrics.InternalTDigestPercentileRanks;
 import org.elasticsearch.search.aggregations.metrics.NumericMetricsAggregation;
-import org.elasticsearch.search.aggregations.metrics.geobounds.GeoBounds;
-import org.elasticsearch.search.aggregations.metrics.percentiles.Percentiles;
-import org.elasticsearch.search.aggregations.metrics.stats.Stats;
-import org.elasticsearch.search.aggregations.metrics.stats.extended.ExtendedStats;
-import org.elasticsearch.search.aggregations.metrics.tophits.TopHits;
+import org.elasticsearch.search.aggregations.metrics.Percentile;
+import org.elasticsearch.search.aggregations.metrics.Percentiles;
+import org.elasticsearch.search.aggregations.metrics.Stats;
+import org.elasticsearch.search.aggregations.metrics.TopHits;
 import org.nlpcn.es4sql.Util;
+import org.nlpcn.es4sql.query.DefaultQueryAction;
+import org.nlpcn.es4sql.query.QueryAction;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Created by Eliran on 27/12/2015.
  */
 public class CSVResultsExtractor {
-    private final boolean includeType;
     private final boolean includeScore;
-    private final boolean indcludeId;
+    private final boolean includeId;
+    private final boolean includeScrollId;
+    private boolean includeIndex;
     private int currentLineIndex;
-    public CSVResultsExtractor(boolean includeScore, boolean includeType, boolean includeId) {
+    private QueryAction queryAction;
+
+    public CSVResultsExtractor(boolean includeScore, boolean includeId, boolean includeScrollId, QueryAction queryAction) {
         this.includeScore = includeScore;
-        this.includeType = includeType;
-        this.indcludeId = includeId;
+        this.includeId = includeId;
+        this.includeScrollId = includeScrollId;
         this.currentLineIndex = 0;
+        this.queryAction = queryAction;
     }
 
-    public CSVResult extractResults(Object queryResult, boolean flat, String separator) throws CsvExtractorException {
+    public CSVResultsExtractor(boolean includeIndex, boolean includeScore, boolean includeId, boolean includeScrollId, QueryAction queryAction) {
+        this.includeIndex = includeIndex;
+        this.includeScore = includeScore;
+        this.includeId = includeId;
+        this.includeScrollId = includeScrollId;
+        this.currentLineIndex = 0;
+        this.queryAction = queryAction;
+    }
+
+
+    public CSVResult extractResults(Object queryResult, boolean flat, String separator, boolean quote) throws CsvExtractorException {
         if(queryResult instanceof SearchHits){
             SearchHit[] hits = ((SearchHits) queryResult).getHits();
             List<Map<String,Object>> docsAsMap = new ArrayList<>();
-            List<String> headers = createHeadersAndFillDocsMap(flat, hits, docsAsMap);
-            List<String> csvLines = createCSVLinesFromDocs(flat, separator, docsAsMap, headers);
+            Set<String> hitFieldNames = new HashSet<>();
+            List<String> headers = createHeadersAndFillDocsMap(flat, hits, null, docsAsMap, hitFieldNames);
+            List<String> csvLines = createCSVLinesFromDocs(flat, separator, quote, docsAsMap, headers, hitFieldNames);
             return new CSVResult(headers,csvLines);
         }
-        if(queryResult instanceof Aggregations){
+        if(queryResult instanceof InternalAggregations){
             List<String> headers = new ArrayList<>();
             List<List<String>> lines = new ArrayList<>();
             lines.add(new ArrayList<String>());
-            handleAggregations((Aggregations) queryResult, headers, lines);
+            handleAggregations((InternalAggregations) queryResult, headers, lines);
 
             List<String> csvLines  = new ArrayList<>();
             for(List<String> simpleLine : lines){
-                csvLines.add(Joiner.on(separator).join(simpleLine));
+                csvLines.add(Joiner.on(separator).join(quote ? simpleLine.stream().map(Util::quoteString).collect(Collectors.toList()) : simpleLine));
             }
 
             //todo: need to handle more options for aggregations:
@@ -59,23 +94,90 @@ public class CSVResultsExtractor {
             return new CSVResult(headers,csvLines);
 
         }
+        if (queryResult instanceof SearchResponse) {
+            SearchHit[] hits = ((SearchResponse) queryResult).getHits().getHits();
+            List<Map<String, Object>> docsAsMap = new ArrayList<>();
+            Set<String> hitFieldNames = new HashSet<>();
+            List<String> headers = createHeadersAndFillDocsMap(flat, hits, ((SearchResponse) queryResult).getScrollId(), docsAsMap, hitFieldNames);
+            List<String> csvLines = createCSVLinesFromDocs(flat, separator, quote, docsAsMap, headers, hitFieldNames);
+            //return new CSVResult(headers, csvLines);
+            return new CSVResult(headers, csvLines, ((SearchResponse) queryResult).getHits().getTotalHits().value);
+        }
+        if (queryResult instanceof GetIndexResponse){
+            Map<String, MappingMetadata> mappings = ((GetIndexResponse) queryResult).getMappings();
+            List<String> headers = Lists.newArrayList("field", "type");
+            List<String> csvLines  = new ArrayList<>();
+            List<List<String>> lines = new ArrayList<>();
+            for (Map.Entry<String, MappingMetadata> entry : mappings.entrySet()) {
+                MappingMetadata mappingJson = entry.getValue();
+                LinkedHashMap properties = (LinkedHashMap) mappingJson.sourceAsMap().get("properties");
+                Map<Object, Object> mapping = Maps.newLinkedHashMap();
+                parseMapping(Lists.newArrayList(), properties, mapping, 0);
+                for (Object key : mapping.keySet()) {
+                    lines.add(Lists.newArrayList(key.toString(), mapping.get(key).toString()));
+                }
+            }
+
+            for(List<String> simpleLine : lines){
+                csvLines.add(Joiner.on(separator).join(simpleLine));
+            }
+
+              return new CSVResult(headers, csvLines, csvLines.size());
+        }
+
+
         return null;
     }
 
-    private  void handleAggregations(Aggregations aggregations, List<String> headers, List<List<String>> lines) throws CsvExtractorException {
+    private static void parseMapping(ArrayList path, LinkedHashMap properties, Map<Object, Object> mapping, int children) {
+        int passed = 1;
+        for (Object key : properties.keySet()) {
+            if (properties.get(key) instanceof LinkedHashMap) {
+                LinkedHashMap value = (LinkedHashMap) properties.get(key);
+                if (!key.equals("properties")) {
+                    path.add(key.toString());
+                }
+                if (value.containsKey("type")) {
+                    String realPath = parsePath(path.toString());
+                    mapping.put(realPath , value.get("type"));
+                    if (value.containsKey("fields")) {
+                        mapping.put(realPath + ".keyword", "keyword");
+                    }
+                    if (passed == children) {
+                        if (path.size() - 2 >= 0) {//还要清理当前key的上层
+                            path.remove(path.size() - 2);
+                        }
+                    }
+                    path.remove(path.size() - 1);//移除当前元素
+                } else {
+                    if (value.containsKey("properties")) {
+                        children = ((LinkedHashMap) value.get("properties")).size();
+                    }
+                    parseMapping(path, value, mapping, children);
+                }
+            }
+            passed++;
+        }
+    }
+
+    private  static String parsePath(String path) {
+        return path.replaceAll("\\s+", "").replace("[", "").replace("]", "").replace(",", ".");
+    }
+
+    private  void handleAggregations(InternalAggregations aggregations, List<String> headers, List<List<String>> lines) throws CsvExtractorException {
         if(allNumericAggregations(aggregations)){
             lines.get(this.currentLineIndex).addAll(fillHeaderAndCreateLineForNumericAggregations(aggregations, headers));
             return;
         }
         //aggregations with size one only supported when not metrics.
-        List<Aggregation> aggregationList = aggregations.asList();
+        List<InternalAggregation> aggregationList = aggregations.asList();
         if(aggregationList.size() > 1){
             throw new CsvExtractorException("currently support only one aggregation at same level (Except for numeric metrics)");
         }
         Aggregation aggregation = aggregationList.get(0);
         //we want to skip singleBucketAggregations (nested,reverse_nested,filters)
         if(aggregation instanceof SingleBucketAggregation){
-            Aggregations singleBucketAggs = ((SingleBucketAggregation) aggregation).getAggregations();
+            InternalAggregations singleBucketAggs = ((SingleBucketAggregation) aggregation).getAggregations();
             handleAggregations(singleBucketAggs, headers, lines);
             return;
         }
@@ -140,9 +242,9 @@ public class CSVResultsExtractor {
         lines.add(line);
     }
 
-    private  List<String> fillHeaderAndCreateLineForNumericAggregations(Aggregations aggregations, List<String> header) throws CsvExtractorException {
+    private  List<String> fillHeaderAndCreateLineForNumericAggregations(InternalAggregations aggregations, List<String> header) throws CsvExtractorException {
         List<String> line = new ArrayList<>();
-        List<Aggregation> aggregationList = aggregations.asList();
+        List<InternalAggregation> aggregationList = aggregations.asList();
         for(Aggregation aggregation : aggregationList){
             handleNumericMetricAggregation(header, line, aggregation);
         }
@@ -183,18 +285,22 @@ public class CSVResultsExtractor {
                 }
             }
             else if( aggregation instanceof Percentiles){
-                String[] percentileHeaders = new String[]{"1.0", "5.0", "25.0", "50.0", "75.0", "95.0", "99.0"};
-                mergeHeadersWithPrefix(header, name, percentileHeaders);
+                List<String> percentileHeaders = new ArrayList<>(7);
                 Percentiles percentiles = (Percentiles) aggregation;
-                line.add(percentiles.percentileAsString(1.0));
-                line.add(percentiles.percentileAsString(5.0));
-                line.add(percentiles.percentileAsString(25.0));
-                line.add(percentiles.percentileAsString(50.0));
-                line.add(percentiles.percentileAsString(75));
-                line.add(percentiles.percentileAsString(95.0));
-                line.add(percentiles.percentileAsString(99.0));
-            }
-            else {
+                for (Percentile p : percentiles) {
+                    percentileHeaders.add(String.valueOf(p.percent()));
+                    line.add(percentiles.percentileAsString(p.percent()));
+                }
+                mergeHeadersWithPrefix(header, name, percentileHeaders.toArray(new String[0]));
+            } else if (aggregation instanceof InternalTDigestPercentileRanks) {//added by xzb 增加PercentileRanks函数支持
+                InternalTDigestPercentileRanks percentileRanks = (InternalTDigestPercentileRanks) aggregation;
+                List<String> percentileHeaders = new ArrayList<>(7);
+                for (Percentile rank : percentileRanks) {
+                    percentileHeaders.add(String.valueOf(rank.value()));
+                    line.add(String.valueOf(rank.percent()));
+                }
+                mergeHeadersWithPrefix(header, name, percentileHeaders.toArray(new String[0]));
+            } else {
                 throw new CsvExtractorException("unknown NumericMetricsAggregation.MultiValue:" + aggregation.getClass());
             }
 
@@ -216,8 +322,8 @@ public class CSVResultsExtractor {
         }
     }
 
-    private  boolean allNumericAggregations(Aggregations aggregations) {
-        List<Aggregation> aggregationList = aggregations.asList();
+    private  boolean allNumericAggregations(InternalAggregations aggregations) {
+        List<InternalAggregation> aggregationList = aggregations.asList();
         for(Aggregation aggregation : aggregationList){
             if(!(aggregation instanceof NumericMetricsAggregation)){
                 return false;
@@ -233,74 +339,107 @@ public class CSVResultsExtractor {
         return firstAggregation;
     }
 
-    private Aggregation getFirstAggregation(Aggregations aggregations){
+    private Aggregation getFirstAggregation(InternalAggregations aggregations){
         return aggregations.asList().get(0);
     }
 
-    private List<String> createCSVLinesFromDocs(boolean flat, String separator, List<Map<String, Object>> docsAsMap, List<String> headers) {
+    private List<String> createCSVLinesFromDocs(boolean flat, String separator, boolean quote, List<Map<String, Object>> docsAsMap, List<String> headers, Set<String> hitFieldNames) {
         List<String> csvLines = new ArrayList<>();
         for(Map<String,Object> doc : docsAsMap){
             String line = "";
             for(String header : headers){
-                line += findFieldValue(header, doc, flat, separator);
+                line += findFieldValue(header, doc, flat, separator, quote, hitFieldNames);
             }
             csvLines.add(line.substring(0, line.lastIndexOf(separator)));
         }
         return csvLines;
     }
 
-    private List<String> createHeadersAndFillDocsMap(boolean flat, SearchHit[] hits, List<Map<String, Object>> docsAsMap) {
-        Set<String> csvHeaders = new HashSet<>();
-        for(SearchHit hit : hits){
-            Map<String, Object> doc = hit.getSourceAsMap();
-            Map<String, DocumentField> fields = hit.getFields();
-            for(DocumentField searchHitField : fields.values()){
-                doc.put(searchHitField.getName(),searchHitField.getValue());
+    private List<String> createHeadersAndFillDocsMap(boolean flat, SearchHit[] hits, String scrollId, List<Map<String, Object>> docsAsMap, Set<String> hitFieldNames) {
+        Set<String> csvHeaders = new LinkedHashSet<>();
+        Map<String, String> highlightMap = Maps.newHashMap();
+        for (SearchHit hit : hits) {
+            //获取高亮内容
+            hit.getHighlightFields().forEach((key, value) -> {
+                String frag = value.fragments()[0].toString();
+                highlightMap.put(key, frag);
+            });
+
+            Map<String, Object> doc = Optional.ofNullable(hit.getSourceAsMap()).orElse(Maps.newHashMap());
+            //替换掉将原始结果中字段的值替换为高亮后的内容
+            for (Map.Entry<String, Object> entry : doc.entrySet()) {
+                if(highlightMap.containsKey(entry.getKey())) {
+                    doc.put(entry.getKey(), highlightMap.get(entry.getKey()));
+                }
             }
+
             mergeHeaders(csvHeaders, doc, flat);
-            if(this.indcludeId){
+            // hit fields
+            Map<String, DocumentField> fields = hit.getFields();
+            for (DocumentField searchHitField : fields.values()) {
+                List<Object> values = Optional.ofNullable(searchHitField.getValues()).orElse(Collections.emptyList());
+                int size = values.size();
+                doc.put(searchHitField.getName(), size == 1 ? values.get(0) : size > 1 ? values : null);
+                hitFieldNames.add(searchHitField.getName());
+                csvHeaders.add(searchHitField.getName());
+            }
+            if (this.includeIndex) {
+                doc.put("_index", hit.getIndex());
+            }
+            if (this.includeId) {
                 doc.put("_id", hit.getId());
             }
-            if(this.includeScore){
+            if (this.includeScore) {
                 doc.put("_score", hit.getScore());
             }
-            if(this.includeType){
-                doc.put("_type",hit.getType());
+            if (this.includeScrollId) {
+                doc.put("_scroll_id", scrollId);
             }
             docsAsMap.add(doc);
         }
-        ArrayList<String> headersList = new ArrayList<>(csvHeaders);
-        if (this.indcludeId){
-            headersList.add("_id");
+        if (this.includeIndex) {
+            csvHeaders.add("_index");
         }
-        if (this.includeScore){
-            headersList.add("_score");
+        if (this.includeId) {
+            csvHeaders.add("_id");
         }
-        if (this.includeType){
-            headersList.add("_type");
+        if (this.includeScore) {
+            csvHeaders.add("_score");
         }
-        return headersList;
+        if (this.includeScrollId) {
+            csvHeaders.add("_scroll_id");
+        }
+        List<String> headers = new ArrayList<>(csvHeaders);
+        if (this.queryAction instanceof DefaultQueryAction) {
+            List<String> fieldNames = ((DefaultQueryAction) this.queryAction).getFieldNames();
+            headers.sort((o1, o2) -> {
+                int i1 = fieldNames.indexOf(o1);
+                int i2 = fieldNames.indexOf(o2);
+                return Integer.compare(i1 < 0 ? Integer.MAX_VALUE : i1, i2 < 0 ? Integer.MAX_VALUE : i2);
+            });
+        }
+        return headers;
     }
 
-    private String findFieldValue(String header, Map<String, Object> doc, boolean flat, String separator) {
-        if(flat && header.contains(".")){
+    private String findFieldValue(String header, Map<String, Object> doc, boolean flat, String separator, boolean quote, Set<String> hitFieldNames) {
+        if(flat && header.contains(".") && !hitFieldNames.contains(header)) {
             String[] split = header.split("\\.");
             Object innerDoc = doc;
             for(String innerField : split){
                 if(!(innerDoc instanceof Map)){
                     return separator;
                 }
-                innerDoc = ((Map<String,Object>)innerDoc).get(innerField);
+                innerDoc = ((Map<?, ?>) innerDoc).get(innerField);
                 if(innerDoc == null){
                     return separator;
                 }
 
             }
-            return innerDoc.toString() + separator;
+            return (quote ? Util.quoteString(innerDoc.toString()) : innerDoc.toString()) + separator;
         }
         else {
             if(doc.containsKey(header)){
-                return String.valueOf(doc.get(header)) + separator;
+                return (quote ? Util.quoteString(String.valueOf(doc.get(header))) : doc.get(header)) + separator;
             }
         }
         return separator;
